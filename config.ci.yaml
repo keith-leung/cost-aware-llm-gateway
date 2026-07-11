@@ -1,0 +1,40 @@
+mode: mock
+
+default_provider: minimax
+
+providers:
+  mimo:
+    base_url: https://api.xiaomimimo.com/v1
+    api_key: MOCK_MIMO_KEY
+    tiers:
+      low:    { model: mimo-v2.5-pro-ultraspeed }
+      medium: { model: mimo-v2.5-pro-ultraspeed }
+      high:   { model: mimo-v2.5-pro-ultraspeed }
+  minimax:
+    base_url: https://gpt-agent.cc/v1
+    api_key: MOCK_MINIMAX_KEY
+    tiers:
+      low:    { model: MiniMax-M2.7-highspeed }
+      medium: { model: MiniMax-M2.7-highspeed }
+      high:   { model: MiniMax-M2.7-highspeed }
+
+judge:
+  provider: minimax
+  tier: medium
+
+redis:
+  url: redis://localhost:6379/0
+
+litellm:
+  timeout: 10
+  num_retries: 1
+
+budget:
+  default_limit_tokens: 1000
+  window_seconds: 3600
+
+breaker:
+  failure_threshold: 2
+  recovery_seconds: 5
+
+routed_model: step-3.7-flash

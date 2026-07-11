@@ -1,0 +1,63 @@
+# --- Secrets / config (NEVER commit) ---
+config.yaml
+config.*.yaml
+!config.example.yaml
+!config.ci.yaml
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.python-version
+
+# --- Test / coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Project artifacts ---
+output/
+logs/
+*.log
+runs/
+baselines/
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Reference / shared inputs (read-only, not shipped as source) ---
+# These are handoff inputs from the supervisor; the public repo's own
+# source tree lives in src/ etc. Keep them gitignored so they don't leak
+# into the published repo.
+reference/
+shared/
+HANDOFF.md
+SPEC.md
+REPORT.md

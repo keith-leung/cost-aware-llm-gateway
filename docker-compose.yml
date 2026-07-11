@@ -1,0 +1,16 @@
+# docker-compose.yml — starts a local Redis for the cost-aware-gateway demo.
+# Usage: `docker compose up -d` then run demos against redis://localhost:6379/0
+# The two-worker shared-state demo (SPEC §5 C1/C2) MUST run against a real
+# Redis, not in-memory or fakeredis.
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+
+volumes:
+  redis-data:

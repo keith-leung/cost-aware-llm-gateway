@@ -1,0 +1,50 @@
+# config.example.yaml — template (committed). Copy to config.yaml and fill
+# real keys/URLs; config.yaml is gitignored and NEVER committed.
+# Shape per shared/LLM_PROVIDERS.md + repo-C-specific (Redis, LiteLLM).
+
+default_provider: mimo          # or minimax
+
+providers:
+  mimo:
+    base_url: https://api.xiaomimimo.com/v1
+    api_key: FILL_IN_CONFIG_YAML   # real key in config.yaml only
+    tiers:
+      low:    { model: mimo-v2.5-pro-ultraspeed }
+      medium: { model: mimo-v2.5-pro-ultraspeed }
+      high:   { model: mimo-v2.5-pro-ultraspeed }
+  minimax:
+    base_url: https://gpt-agent.cc/v1
+    api_key: FILL_IN_CONFIG_YAML   # real key in config.yaml only
+    tiers:
+      low:    { model: MiniMax-M2.7-highspeed }   # case-sensitive
+      medium: { model: MiniMax-M2.7-highspeed }
+      high:   { model: MiniMax-M2.7-highspeed }
+
+# Cross-vendor judging guard (C uses MiniMax for any judge-side needs).
+judge:
+  provider: minimax
+  tier: medium
+
+# --- Repo-C-specific ---
+
+# Redis: shared state backend for budget + circuit breaker. MANDATORY
+# (not in-memory). The two-worker shared-state demo runs against this.
+# Use docker-compose to start one, or point at an existing instance.
+redis:
+  url: redis://localhost:6379/0     # real URL in config.yaml only
+
+# LiteLLM Router: pin to ANY version after 1.82.8 — versions 1.82.7/1.82.8
+# were backdoored 2026-03 (TeamPCP; CI/CD compromise via Trivy GitHub
+# Action → stolen PyPI token; CVE-2026-42271). Verify the first clean
+# release at impl time and pin it in pyproject.toml; cite the CVE + the
+# CI/CD characterization (NOT "MCP-injection") in README + SCALING.md.
+litellm:
+  # (router config — model groups + fallbacks — declared here or in code)
+
+# DoW / budget demo params.
+budget:
+  default_limit_tokens: 50000
+  window_seconds: 3600
+breaker:
+  failure_threshold: 3
+  recovery_seconds: 30
