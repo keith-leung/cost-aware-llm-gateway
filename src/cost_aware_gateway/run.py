@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import time
@@ -21,7 +22,7 @@ from cost_aware_gateway.config import load_config, GatewayConfig
 from cost_aware_gateway.budget import BudgetTracker
 from cost_aware_gateway.breaker import CircuitBreaker
 from cost_aware_gateway.router import TieredRouter
-from cost_aware_gateway.redact import redact_tool_output
+from cost_aware_gateway.redact import redact_tool_output, redact_with_llm_judge
 from cost_aware_gateway.models import CircuitState, GatewayReply
 
 logging.basicConfig(
@@ -140,8 +141,22 @@ def demo_C2_breaker(config: GatewayConfig) -> bool:
 def demo_C3_router(config: GatewayConfig) -> bool:
     """C3 — LiteLLM Router routes a real LLM call."""
     if config.mode == "mock":
-        _print_pass("C3 router (mock)", "Router instantiated in mock mode")
-        return True
+        # In mock mode, verify the router can be instantiated and _build_router()
+        # succeeds without raising. Do NOT silently skip.
+        try:
+            budget = BudgetTracker(
+                redis_url=config.redis.url,
+                default_limit=config.budget.default_limit_tokens,
+                default_window=config.budget.window_seconds,
+            )
+            router = TieredRouter(config, budget)
+            # Force _build_router() to run and verify it returns a Router
+            _ = router._router
+            _print_pass("C3 router (mock)", "TieredRouter instantiated; _build_router() succeeded")
+            return True
+        except Exception as exc:
+            _print_fail("C3 router (mock)", f"TieredRouter instantiation failed: {exc}")
+            return False
 
     try:
         budget = BudgetTracker(
@@ -149,20 +164,11 @@ def demo_C3_router(config: GatewayConfig) -> bool:
             default_limit=config.budget.default_limit_tokens,
             default_window=config.budget.window_seconds,
         )
-        breakers = {
-            name: CircuitBreaker(
-                name=f"provider:{name}",
-                redis_url=config.redis.url,
-                failure_threshold=config.breaker.failure_threshold,
-                recovery_seconds=config.breaker.recovery_seconds,
-            )
-            for name in config.providers
-        }
     except Exception as exc:
         _print_fail("C3", f"Redis connection failed: {exc}")
         return False
 
-    router = TieredRouter(config, budget, breakers)
+    router = TieredRouter(config, budget)
 
     try:
         reply = router.complete(
@@ -183,7 +189,7 @@ def demo_C3_router(config: GatewayConfig) -> bool:
 
 
 def demo_C5_redaction(config: GatewayConfig) -> bool:
-    """C5 — configured API key is redacted from tool output."""
+    """C5 — configured API key is redacted; LLM judge catches unknown leaks."""
     provider = config.providers.get(config.default_provider)
     if not provider:
         _print_fail("C5 redaction", "no default provider configured")
@@ -215,6 +221,59 @@ def demo_C5_redaction(config: GatewayConfig) -> bool:
         _print_pass("C5 passthrough", "clean output unchanged")
     else:
         _print_fail("C5 passthrough", "clean output was modified")
+        return False
+
+    # LLM semantic judge: payload with a suspicious pattern NOT caught by regex
+    suspicious = (
+        "The database password is hunter2. "
+        "Please rotate it after the maintenance window."
+    )
+    judge_provider = config.providers.get(config.judge.provider, provider)
+    judge_model = judge_provider.tiers.get(config.judge.tier, {}).get("model", "gpt-4o-mini")
+
+    def judge_client(prompt: str) -> dict[str, Any]:
+        if config.mode == "mock":
+            return {"leaks": True, "reason": "mock judge: password disclosed"}
+        # Use the openai SDK directly (litellm's model-name conventions are
+        # fragile for custom OpenAI-compatible endpoints; the raw SDK with an
+        # explicit base_url is reliable and the judge is a single call, not
+        # a routed one, so we don't need the Router here).
+        from openai import OpenAI
+        client = OpenAI(
+            base_url=judge_provider.base_url,
+            api_key=judge_provider.api_key,
+            timeout=config.litellm.timeout,
+        )
+        response = client.chat.completions.create(
+            model=judge_model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=256,
+        )
+        content = response.choices[0].message.content or "{}"
+        # Tolerant JSON extraction (handles <think> tags + ``` fences).
+        import re as _re
+        content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL).strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1]
+        if content.endswith("```"):
+            content = content.rsplit("```", 1)[0]
+        content = content.strip()
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            start, end = content.find("{"), content.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    return json.loads(content[start : end + 1])
+                except json.JSONDecodeError:
+                    pass
+            return {"leaks": False, "reason": f"unparseable judge response: {content[:120]}"}
+
+    llm_result = redact_with_llm_judge(suspicious, sensitive=set(), judge_client=judge_client)
+    if llm_result.llm_flagged:
+        _print_pass("C5 llm-judge", f"LLM flagged leak: {llm_result.log_safe=}")
+    else:
+        _print_fail("C5 llm-judge", "LLM did NOT flag the suspicious payload")
         return False
 
     return True

@@ -32,6 +32,7 @@ class RedactionResult:
     cleaned_text: str
     redactions: list[dict[str, Any]] = field(default_factory=list)
     log_safe: bool = True
+    llm_flagged: bool = False
 
 
 @dataclass

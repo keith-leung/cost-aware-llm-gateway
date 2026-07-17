@@ -6,9 +6,20 @@ import threading
 
 import fakeredis
 import pytest
+import redis
 
 from cost_aware_gateway.budget import BudgetTracker
 from cost_aware_gateway.models import BudgetExceededError
+
+
+def _real_redis_available() -> bool:
+    try:
+        client = redis.from_url("redis://localhost:6379/0", socket_timeout=2)
+        client.ping()
+        client.close()
+        return True
+    except Exception:
+        return False
 
 
 @pytest.fixture()
@@ -71,3 +82,68 @@ class TestBudgetTracker:
         # At most 10 reservations of 100 can fit in 1000
         assert status["reserved"] <= 1000, f"overspend detected: reserved={status['reserved']}"
         assert not errors, f"unexpected errors: {errors}"
+
+    def test_concurrent_reserve_exact_counts(self, fake_budget: BudgetTracker) -> None:
+        """Prove exactly floor(1000/150)=6 succeed and 4 fail, final reserved=900."""
+        fake_budget.reset("u5")
+        fake_budget.set_budget("u5", limit_tokens=1000)
+        successes = 0
+        failures = 0
+        errors: list[Exception] = []
+
+        def reserve() -> None:
+            nonlocal successes, failures
+            try:
+                fake_budget.check_and_reserve("u5", 150)
+                successes += 1
+            except BudgetExceededError:
+                failures += 1
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=reserve) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        status = fake_budget.status("u5")
+        assert status is not None
+        assert successes == 6, f"expected 6 successes, got {successes}"
+        assert failures == 4, f"expected 4 failures, got {failures}"
+        assert status["reserved"] == 900, f"expected reserved=900, got {status['reserved']}"
+        assert not errors, f"unexpected errors: {errors}"
+
+
+@pytest.mark.skipif(not _real_redis_available(), reason="Real Redis not available at localhost:6379/0")
+class TestRealRedisBudget:
+    """Budget atomicity proof against real Redis (not fakeredis)."""
+
+    def test_concurrent_reserve_real_redis(self) -> None:
+        client = redis.from_url("redis://localhost:6379/0", decode_responses=True)
+        budget = BudgetTracker(redis_url="redis://localhost:6379/0", default_limit=1000, default_window=3600.0, _redis_client=client)
+        user = "stress-user"
+        budget.reset(user)
+        budget.set_budget(user, limit_tokens=1000)
+
+        errors: list[Exception] = []
+
+        def reserve() -> None:
+            try:
+                budget.check_and_reserve(user, 100)
+            except BudgetExceededError:
+                pass
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=reserve) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        status = budget.status(user)
+        assert status is not None
+        assert status["reserved"] <= 1000, f"overspend detected: reserved={status['reserved']}"
+        assert not errors, f"unexpected errors: {errors}"
+        budget.reset(user)

@@ -42,11 +42,15 @@ worker-2. The per-user budget counter sees only half the spend.
 `CircuitBreaker` instances pointed at the same Redis share counters and state.
 
 **Atomicity mechanisms (measured here):**
-- Budget reserve uses a **Lua script** that checks window expiry and `INCRBY`
-  the reserved counter in one atomic round-trip. Concurrent reserve races cannot
-  overspend.
-- Budget reconcile uses a **Lua script** that adjusts reserved vs spent in one
-  atomic round-trip.
+- Budget reserve uses **Redis `WATCH` + `MULTI`/`EXEC`** (optimistic locking)
+  that checks window expiry and `INCRBY` the reserved counter in one atomic
+  round-trip. Concurrent reserve races cannot overspend.
+- Budget reconcile uses **Redis `WATCH` + `MULTI`/`EXEC`** to adjust reserved vs
+  spent in one atomic round-trip.
+- We use `WATCH`/`MULTI`/`EXEC` instead of a Lua script because
+  **fakeredis does not implement `EVAL`/`EVALSHA`**. The optimistic-locking
+  retry loop is still atomic on real Redis and keeps the unit tests runnable
+  in CI without a live Redis instance.
 - Breaker half-open single-probe uses **Redis `SET ... NX`** (SETNX) to ensure
   only one worker across all instances can probe the half-open state.
 

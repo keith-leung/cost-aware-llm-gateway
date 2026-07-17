@@ -61,3 +61,10 @@ shared/
 HANDOFF.md
 SPEC.md
 REPORT.md
+
+# --- Internal build/process docs (not part of the public artifact) ---
+EVIDENCE*.md
+WORK_ORDER*.md
+*HANG_FIX*.md
+SPEC_GAP.md
+HANDOFF.md

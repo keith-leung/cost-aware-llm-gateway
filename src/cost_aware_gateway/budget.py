@@ -59,17 +59,20 @@ class BudgetTracker:
     ) -> None:
         """Set (or update) a user's budget limit and window."""
         key_reserved, key_spent, key_window = self._keys(user_id)
+        uid = user_id.replace(":", "_")
         pipe = self._redis.pipeline()
-        pipe.set(f"{self._key_prefix}:{user_id}:limit", limit_tokens)
+        pipe.set(f"{self._key_prefix}:{uid}:limit", limit_tokens)
         if window_seconds is not None:
-            pipe.set(f"{self._key_prefix}:{user_id}:window", window_seconds)
+            pipe.set(f"{self._key_prefix}:{uid}:window", window_seconds)
         pipe.set(key_window, time.time(), ex=int(window_seconds or self._default_window))
         pipe.execute()
 
     def check_and_reserve(self, user_id: str, est_tokens: int) -> None:
         """Atomically reserve est_tokens for user_id.
 
-        Uses WATCH + MULTI/EXEC for atomicity (compatible with fakeredis).
+        The enforced invariant is: spent + reserved + est <= limit.
+        (spent = committed in this window; reserved = in-flight; est = this call.)
+        Uses WATCH + MULTI/EXEC for atomicity.
         """
         if est_tokens <= 0:
             return
@@ -81,7 +84,7 @@ class BudgetTracker:
         while True:
             try:
                 with self._redis.pipeline() as pipe:
-                    pipe.watch(key_window, key_reserved)
+                    pipe.watch(key_window, key_reserved, key_spent)
                     current_window = pipe.get(key_window)
                     if current_window is None:
                         pipe.multi()
@@ -98,11 +101,12 @@ class BudgetTracker:
                         pipe.execute()
                         return
                     reserved = int(pipe.get(key_reserved) or 0)
-                    new_reserved = reserved + est_tokens
-                    if new_reserved > limit:
-                        raise BudgetExceededError(user_id, reserved, limit)
+                    spent = int(pipe.get(key_spent) or 0)
+                    # The invariant: spent + reserved + est must not exceed limit.
+                    if spent + reserved + est_tokens > limit:
+                        raise BudgetExceededError(user_id, spent + reserved, limit)
                     pipe.multi()
-                    pipe.set(key_reserved, new_reserved)
+                    pipe.set(key_reserved, reserved + est_tokens)
                     pipe.execute()
                     return
             except redis.exceptions.WatchError:

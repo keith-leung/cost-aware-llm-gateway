@@ -11,9 +11,10 @@ Design (per SPEC §6):
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-from typing import Any
+from typing import Any, Callable
 
 from cost_aware_gateway.models import RedactionResult
 
@@ -27,6 +28,12 @@ _KNOWN_KEY_PATTERNS = [
     re.compile(r"api[_-]?key[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9_\-]{20,})"),  # api_key = ...
     re.compile(r"password[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9_\-!@#\$%]{6,})"),  # password = ...
 ]
+
+_JUDGE_PROMPT = (
+    "Does this tool output contain any sensitive information beyond what was "
+    "already redacted (API keys, credentials, PII, internal identifiers)? "
+    'Reply JSON: {"leaks": true/false, "reason": "..."}'
+)
 
 
 def redact_tool_output(text: str, sensitive: set[str]) -> RedactionResult:
@@ -55,12 +62,7 @@ def redact_tool_output(text: str, sensitive: set[str]) -> RedactionResult:
             cleaned = pattern.sub("[REDACTED]", cleaned)
             redactions.append({"pattern": pattern.pattern, "count": len(matches)})
 
-    # 3. Semantic judgment via LLM (for "is this leaking beyond known keys")
-    #    This is a placeholder hook — the caller can pass the result to a judge LLM
-    #    if deeper inspection is needed. We do NOT make that call here because
-    #    the redactor is deterministic; the decision to invoke an LLM is made
-    #    by the orchestration layer.
-    log_safe = len(redactions) == 0 or True
+    log_safe = len(redactions) == 0
 
     if redactions:
         logger.info(
@@ -72,3 +74,49 @@ def redact_tool_output(text: str, sensitive: set[str]) -> RedactionResult:
         redactions=redactions,
         log_safe=log_safe,
     )
+
+
+def redact_with_llm_judge(
+    text: str,
+    sensitive: set[str],
+    judge_client: Callable[[str], dict[str, Any]],
+) -> RedactionResult:
+    """Structural redaction followed by LLM semantic leak detection.
+
+    Args:
+        text: raw tool output string.
+        sensitive: set of exact strings to redact structurally.
+        judge_client: callable that accepts a prompt string and returns a dict
+            with at least ``leaks`` (bool) and ``reason`` (str) keys.
+
+    Returns:
+        RedactionResult. If the LLM flags a leak, ``llm_flagged=True`` and
+        ``cleaned_text`` is the structurally-redacted text (we do NOT let the
+        LLM mutate the text — it may hallucinate). If no leak, returns the
+        structural result as-is.
+    """
+    # 1. Structural redaction first (deterministic, fast)
+    structural = redact_tool_output(text, sensitive)
+
+    # 2. Ask the LLM judge whether the *structurally-redacted* text still
+    #    contains something sensitive the regex didn't catch.
+    prompt = f"{_JUDGE_PROMPT}\n\nTool output:\n{structural.cleaned_text}"
+    try:
+        verdict = judge_client(prompt)
+    except Exception as exc:
+        logger.warning("LLM judge call failed: %s", exc)
+        return structural
+
+    leaks = bool(verdict.get("leaks", False))
+    reason = str(verdict.get("reason", ""))
+
+    if leaks:
+        logger.info("AgentLeak LLM judge flagged leak: %s", reason)
+        return RedactionResult(
+            cleaned_text=structural.cleaned_text,
+            redactions=structural.redactions,
+            log_safe=False,
+            llm_flagged=True,
+        )
+
+    return structural

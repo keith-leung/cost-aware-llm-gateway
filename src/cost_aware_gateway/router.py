@@ -41,12 +41,10 @@ class TieredRouter:
         self,
         config: GatewayConfig,
         budget: BudgetTracker,
-        breakers: dict[str, CircuitBreaker],
         call_fn: Callable[..., dict] | None = None,
     ) -> None:
         self._config = config
         self._budget = budget
-        self._breakers = breakers
         self._call_fn = call_fn
         self._router = self._build_router()
         self._default_provider = config.default_provider
@@ -105,7 +103,12 @@ class TieredRouter:
         model_name = f"{provider}:{tier}"
 
         # 1. Budget pre-check
-        est_tokens = max_tokens
+        #    Estimate total tokens as prompt + completion. This is a rough
+        #    heuristic (~1 token per 4 characters); the reconcile step corrects
+        #    with actual usage from the API response.
+        prompt_text = system + user_message
+        prompt_est = max(0, (len(prompt_text) - prompt_text.count(" ")) // 4)
+        est_tokens = prompt_est + max_tokens
         self._budget.check_and_reserve(user_id, est_tokens)
 
         # 2. Provider breaker
@@ -149,10 +152,9 @@ class TieredRouter:
                     "total_tokens": getattr(response.usage, "total_tokens", 0),
                 }
 
-            # 4. Budget reconcile (use actual completion tokens if available)
-            actual_tokens = usage.get("completion_tokens") or usage.get(
-                "total_tokens", est_tokens
-            )
+            # 4. Budget reconcile
+            #    Use total_tokens when available; it includes prompt + completion.
+            actual_tokens = usage.get("total_tokens", est_tokens)
             self._budget.record_actual(user_id, est_tokens, actual_tokens)
 
             # 5. Breaker success
