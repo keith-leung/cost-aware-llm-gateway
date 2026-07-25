@@ -7,16 +7,16 @@ providers:
     base_url: https://api.xiaomimimo.com/v1
     api_key: MOCK_MIMO_KEY
     tiers:
-      low:    { model: mimo-v2.5-pro-ultraspeed }
-      medium: { model: mimo-v2.5-pro-ultraspeed }
-      high:   { model: mimo-v2.5-pro-ultraspeed }
+      low:    { model: mimo-v2.5-pro-ultraspeed, input_price_per_token: 0.0000002, output_price_per_token: 0.0000006, cache_read_price_per_token: 0.00000002 }
+      medium: { model: mimo-v2.5-pro-ultraspeed, input_price_per_token: 0.0000004, output_price_per_token: 0.0000012, cache_read_price_per_token: 0.00000004 }
+      high:   { model: mimo-v2.5-pro-ultraspeed, input_price_per_token: 0.0000008, output_price_per_token: 0.0000024, cache_read_price_per_token: 0.00000008 }
   minimax:
     base_url: https://gpt-agent.cc/v1
     api_key: MOCK_MINIMAX_KEY
     tiers:
-      low:    { model: MiniMax-M2.7-highspeed }
-      medium: { model: MiniMax-M2.7-highspeed }
-      high:   { model: MiniMax-M2.7-highspeed }
+      low:    { model: MiniMax-M2.7-highspeed, input_price_per_token: 0.0000001, output_price_per_token: 0.0000003, cache_read_price_per_token: 0.00000001 }
+      medium: { model: MiniMax-M2.7-highspeed, input_price_per_token: 0.0000002, output_price_per_token: 0.0000006, cache_read_price_per_token: 0.00000002 }
+      high:   { model: MiniMax-M2.7-highspeed, input_price_per_token: 0.0000004, output_price_per_token: 0.0000012, cache_read_price_per_token: 0.00000004 }
 
 judge:
   provider: minimax
@@ -30,7 +30,7 @@ litellm:
   num_retries: 1
 
 budget:
-  default_limit_tokens: 1000
+  default_limit_usd: 1.0
   window_seconds: 3600
 
 breaker:

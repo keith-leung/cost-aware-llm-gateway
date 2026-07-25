@@ -14,14 +14,15 @@ class CircuitState(str, Enum):
 
 
 class BudgetExceededError(Exception):
-    """Raised when a user's token budget is exceeded."""
+    """Raised when a user's dollar budget is exceeded."""
 
-    def __init__(self, user_id: str, spent: int, limit: int) -> None:
+    def __init__(self, user_id: str, spent: float, limit: float) -> None:
         self.user_id = user_id
         self.spent = spent
         self.limit = limit
         super().__init__(
-            f"Budget exceeded for user={user_id}: spent={spent}, limit={limit}"
+            f"Budget exceeded for user={user_id}: "
+            f"spent=${spent:.6f}, limit=${limit:.6f}"
         )
 
 
@@ -47,3 +48,5 @@ class GatewayReply:
     breaker_state_after: str
     latency_ms: float
     call_id: str
+    cost_usd: float = 0.0
+    est_cost_usd: float = 0.0

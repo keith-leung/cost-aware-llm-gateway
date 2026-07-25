@@ -31,41 +31,41 @@ def fake_budget():
 class TestBudgetTracker:
     def test_reserve_and_reconcile(self, fake_budget: BudgetTracker) -> None:
         fake_budget.reset("u1")
-        fake_budget.set_budget("u1", limit_tokens=1000)
-        fake_budget.check_and_reserve("u1", 500)
-        fake_budget.record_actual("u1", 500, 300)
+        fake_budget.set_budget("u1", limit_usd=1.000)
+        fake_budget.check_and_reserve("u1", 0.500)
+        fake_budget.record_actual("u1", 0.500, 0.300)
         status = fake_budget.status("u1")
         assert status is not None
-        assert status["spent"] == 300
-        assert status["reserved"] == 0
+        assert abs(status["spent_usd"] - 0.300) < 0.001
+        assert abs(status["reserved_usd"] - 0) < 0.001
 
     def test_budget_exceeded(self, fake_budget: BudgetTracker) -> None:
         fake_budget.reset("u2")
-        fake_budget.set_budget("u2", limit_tokens=100)
-        fake_budget.check_and_reserve("u2", 60)
+        fake_budget.set_budget("u2", limit_usd=0.100)
+        fake_budget.check_and_reserve("u2", 0.060)
         with pytest.raises(BudgetExceededError):
-            fake_budget.check_and_reserve("u2", 50)
+            fake_budget.check_and_reserve("u2", 0.050)
 
     def test_window_reset(self, fake_budget: BudgetTracker) -> None:
         fake_budget.reset("u3")
-        fake_budget.set_budget("u3", limit_tokens=100, window_seconds=1)
-        fake_budget.check_and_reserve("u3", 100)
+        fake_budget.set_budget("u3", limit_usd=0.100, window_seconds=1)
+        fake_budget.check_and_reserve("u3", 0.100)
         import time
         time.sleep(1.1)
-        fake_budget.check_and_reserve("u3", 50)
+        fake_budget.check_and_reserve("u3", 0.050)
         status = fake_budget.status("u3")
         assert status is not None
-        assert status["reserved"] == 50
+        assert abs(status["reserved_usd"] - 0.050) < 0.001
 
     def test_concurrent_reserve_no_overspend(self, fake_budget: BudgetTracker) -> None:
         """Concurrent reserves must not overspend the limit."""
         fake_budget.reset("u4")
-        fake_budget.set_budget("u4", limit_tokens=1000)
+        fake_budget.set_budget("u4", limit_usd=1.000)
         errors: list[Exception] = []
 
         def reserve() -> None:
             try:
-                fake_budget.check_and_reserve("u4", 100)
+                fake_budget.check_and_reserve("u4", 0.100)
             except BudgetExceededError:
                 pass
             except Exception as exc:
@@ -80,13 +80,13 @@ class TestBudgetTracker:
         status = fake_budget.status("u4")
         assert status is not None
         # At most 10 reservations of 100 can fit in 1000
-        assert status["reserved"] <= 1000, f"overspend detected: reserved={status['reserved']}"
+        assert status["reserved_usd"] <= 1.000, f"overspend detected: reserved={status['reserved_usd']}"
         assert not errors, f"unexpected errors: {errors}"
 
     def test_concurrent_reserve_exact_counts(self, fake_budget: BudgetTracker) -> None:
         """Prove exactly floor(1000/150)=6 succeed and 4 fail, final reserved=900."""
         fake_budget.reset("u5")
-        fake_budget.set_budget("u5", limit_tokens=1000)
+        fake_budget.set_budget("u5", limit_usd=1.000)
         successes = 0
         failures = 0
         errors: list[Exception] = []
@@ -94,7 +94,7 @@ class TestBudgetTracker:
         def reserve() -> None:
             nonlocal successes, failures
             try:
-                fake_budget.check_and_reserve("u5", 150)
+                fake_budget.check_and_reserve("u5", 0.150)
                 successes += 1
             except BudgetExceededError:
                 failures += 1
@@ -111,7 +111,7 @@ class TestBudgetTracker:
         assert status is not None
         assert successes == 6, f"expected 6 successes, got {successes}"
         assert failures == 4, f"expected 4 failures, got {failures}"
-        assert status["reserved"] == 900, f"expected reserved=900, got {status['reserved']}"
+        assert abs(status["reserved_usd"] - 0.900) < 0.001, f"expected reserved=900, got {status['reserved_usd']}"
         assert not errors, f"unexpected errors: {errors}"
 
 
@@ -124,13 +124,13 @@ class TestRealRedisBudget:
         budget = BudgetTracker(redis_url="redis://localhost:6379/0", default_limit=1000, default_window=3600.0, _redis_client=client)
         user = "stress-user"
         budget.reset(user)
-        budget.set_budget(user, limit_tokens=1000)
+        budget.set_budget(user, limit_usd=1.000)
 
         errors: list[Exception] = []
 
         def reserve() -> None:
             try:
-                budget.check_and_reserve(user, 100)
+                budget.check_and_reserve(user, 0.100)
             except BudgetExceededError:
                 pass
             except Exception as exc:
@@ -144,6 +144,6 @@ class TestRealRedisBudget:
 
         status = budget.status(user)
         assert status is not None
-        assert status["reserved"] <= 1000, f"overspend detected: reserved={status['reserved']}"
+        assert status["reserved_usd"] <= 1.000, f"overspend detected: reserved={status['reserved_usd']}"
         assert not errors, f"unexpected errors: {errors}"
         budget.reset(user)

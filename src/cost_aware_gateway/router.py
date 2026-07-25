@@ -18,6 +18,7 @@ from cost_aware_gateway.config import GatewayConfig
 from cost_aware_gateway.models import CircuitState, GatewayReply
 from cost_aware_gateway.budget import BudgetTracker, BudgetExceededError
 from cost_aware_gateway.breaker import CircuitBreaker
+from cost_aware_gateway.cost import CostCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class TieredRouter:
         self._config = config
         self._budget = budget
         self._call_fn = call_fn
+        self._cost_calc = CostCalculator(config)
         self._router = self._build_router()
         self._default_provider = config.default_provider
         # Map provider -> breaker name (one breaker per provider)
@@ -102,19 +104,20 @@ class TieredRouter:
         provider = self._default_provider
         model_name = f"{provider}:{tier}"
 
-        # 1. Budget pre-check
-        #    Estimate total tokens as prompt + completion. This is a rough
-        #    heuristic (~1 token per 4 characters); the reconcile step corrects
-        #    with actual usage from the API response.
+        # 1. Budget pre-check — estimate dollar cost from token heuristic.
         prompt_text = system + user_message
         prompt_est = max(0, (len(prompt_text) - prompt_text.count(" ")) // 4)
-        est_tokens = prompt_est + max_tokens
-        self._budget.check_and_reserve(user_id, est_tokens)
+        est_input_tokens = prompt_est
+        est_output_tokens = max_tokens
+        est_cost = self._cost_calc.cost_usd(
+            provider, tier, est_input_tokens, est_output_tokens,
+        )
+        self._budget.check_and_reserve(user_id, est_cost)
 
         # 2. Provider breaker
         breaker = self._provider_breakers.get(provider)
         if breaker is None or not breaker.allow():
-            self._budget.record_actual(user_id, est_tokens, 0)
+            self._budget.record_actual(user_id, est_cost, 0.0)
             raise RuntimeError(
                 f"Circuit breaker open for provider={provider}; call rejected"
             )
@@ -152,10 +155,13 @@ class TieredRouter:
                     "total_tokens": getattr(response.usage, "total_tokens", 0),
                 }
 
-            # 4. Budget reconcile
-            #    Use total_tokens when available; it includes prompt + completion.
-            actual_tokens = usage.get("total_tokens", est_tokens)
-            self._budget.record_actual(user_id, est_tokens, actual_tokens)
+            # 4. Budget reconcile — compute actual dollar cost from real usage.
+            actual_input = usage.get("prompt_tokens", est_input_tokens)
+            actual_output = usage.get("completion_tokens", est_output_tokens)
+            actual_cost = self._cost_calc.cost_usd(
+                provider, tier, actual_input, actual_output,
+            )
+            self._budget.record_actual(user_id, est_cost, actual_cost)
 
             # 5. Breaker success
             if breaker is not None:
@@ -173,13 +179,15 @@ class TieredRouter:
                 breaker_state_after=breaker_state,
                 latency_ms=round(latency_ms, 2),
                 call_id=call_id,
+                cost_usd=round(actual_cost, 6),
+                est_cost_usd=round(est_cost, 6),
             )
 
         except Exception as exc:
             latency_ms = (time.perf_counter() - t0) * 1000.0
             if breaker is not None:
                 breaker.record_failure()
-            self._budget.record_actual(user_id, est_tokens, 0)
+            self._budget.record_actual(user_id, est_cost, 0.0)
             raise RuntimeError(
                 f"Gateway call failed (provider={provider}, tier={tier}): {exc}"
             ) from exc

@@ -16,7 +16,7 @@ import yaml
 
 @dataclass
 class BudgetConfig:
-    default_limit_tokens: int = 50_000
+    default_limit_usd: float = 10.0
     window_seconds: float = 3600.0
 
 
@@ -38,10 +38,18 @@ class LiteLLMConfig:
 
 
 @dataclass
+class TierConfig:
+    model: str = ""
+    input_price_per_token: float = 0.0   # $/token for input
+    output_price_per_token: float = 0.0  # $/token for output
+    cache_read_price_per_token: float = 0.0  # $/token for cached input (≤ input price)
+
+
+@dataclass
 class ProviderConfig:
     base_url: str
     api_key: str
-    tiers: dict[str, dict[str, str]]
+    tiers: dict[str, TierConfig]
 
 
 @dataclass
@@ -107,10 +115,19 @@ def load_config(path: str | Path | None = None) -> GatewayConfig:
     providers_raw = raw.get("providers", {})
     providers: dict[str, ProviderConfig] = {}
     for name, cfg in providers_raw.items():
+        tiers_raw = cfg.get("tiers", {})
+        tiers: dict[str, TierConfig] = {}
+        for tier_name, tcfg in tiers_raw.items():
+            tiers[tier_name] = TierConfig(
+                model=tcfg.get("model", ""),
+                input_price_per_token=float(tcfg.get("input_price_per_token", 0.0)),
+                output_price_per_token=float(tcfg.get("output_price_per_token", 0.0)),
+                cache_read_price_per_token=float(tcfg.get("cache_read_price_per_token", 0.0)),
+            )
         providers[name] = ProviderConfig(
             base_url=cfg.get("base_url", ""),
             api_key=cfg.get("api_key", ""),
-            tiers=cfg.get("tiers", {}),
+            tiers=tiers,
         )
 
     # Parse judge
@@ -134,7 +151,7 @@ def load_config(path: str | Path | None = None) -> GatewayConfig:
     # Parse budget
     budget_raw = raw.get("budget", {})
     budget_cfg = BudgetConfig(
-        default_limit_tokens=int(budget_raw.get("default_limit_tokens", 50_000)),
+        default_limit_usd=float(budget_raw.get("default_limit_usd", budget_raw.get("default_limit_tokens", 10.0))),
         window_seconds=float(budget_raw.get("window_seconds", 3600.0)),
     )
 

@@ -45,11 +45,11 @@ def demo_C1_budget(config: GatewayConfig) -> bool:
     try:
         budget = BudgetTracker(
             redis_url=config.redis.url,
-            default_limit=config.budget.default_limit_tokens,
+            default_limit=config.budget.default_limit_usd,
             default_window=config.budget.window_seconds,
         )
         budget.reset("demo-user")
-        budget.set_budget("demo-user", limit_tokens=1000)
+        budget.set_budget("demo-user", limit_usd=1.0)
 
         budget.check_and_reserve("demo-user", 600)
         _print_pass("C1 reserve-1", "reserved 600 tokens")
@@ -64,7 +64,7 @@ def demo_C1_budget(config: GatewayConfig) -> bool:
         # Second tracker sees the same state
         budget2 = BudgetTracker(
             redis_url=config.redis.url,
-            default_limit=config.budget.default_limit_tokens,
+            default_limit=config.budget.default_limit_usd,
             default_window=config.budget.window_seconds,
         )
         status = budget2.status("demo-user")
@@ -146,7 +146,7 @@ def demo_C3_router(config: GatewayConfig) -> bool:
         try:
             budget = BudgetTracker(
                 redis_url=config.redis.url,
-                default_limit=config.budget.default_limit_tokens,
+                default_limit=config.budget.default_limit_usd,
                 default_window=config.budget.window_seconds,
             )
             router = TieredRouter(config, budget)
@@ -161,7 +161,7 @@ def demo_C3_router(config: GatewayConfig) -> bool:
     try:
         budget = BudgetTracker(
             redis_url=config.redis.url,
-            default_limit=config.budget.default_limit_tokens,
+            default_limit=config.budget.default_limit_usd,
             default_window=config.budget.window_seconds,
         )
     except Exception as exc:

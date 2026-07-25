@@ -33,23 +33,23 @@ class TestBudgetFailurePaths:
     def test_budget_exhaustion_blocks_reserve(self, fake_budget: BudgetTracker) -> None:
         """Once limit is hit, further reserves must raise BudgetExceededError."""
         fake_budget.reset("u1")
-        fake_budget.set_budget("u1", limit_tokens=100)
-        fake_budget.check_and_reserve("u1", 60)
-        fake_budget.check_and_reserve("u1", 40)  # exactly hits limit
+        fake_budget.set_budget("u1", limit_usd=0.100)
+        fake_budget.check_and_reserve("u1", 0.060)
+        fake_budget.check_and_reserve("u1", 0.040)  # exactly hits limit
         with pytest.raises(BudgetExceededError):
-            fake_budget.check_and_reserve("u1", 1)  # must fail
+            fake_budget.check_and_reserve("u1", 0.001)  # must fail
 
     def test_window_reset_clears_spend(self, fake_budget: BudgetTracker) -> None:
         """After window expires, reserved/spent must reset to 0."""
         fake_budget.reset("u2")
-        fake_budget.set_budget("u2", limit_tokens=100, window_seconds=1)
-        fake_budget.check_and_reserve("u2", 100)
+        fake_budget.set_budget("u2", limit_usd=0.100, window_seconds=1)
+        fake_budget.check_and_reserve("u2", 0.100)
         time.sleep(1.1)
-        fake_budget.check_and_reserve("u2", 50)  # should not raise after reset
+        fake_budget.check_and_reserve("u2", 0.050)  # should not raise after reset
         status = fake_budget.status("u2")
         assert status is not None
-        assert status["reserved"] == 50
-        assert status["spent"] == 0
+        assert abs(status["reserved_usd"] - 0.050) < 0.001
+        assert abs(status["spent_usd"] - 0) < 0.001
 
 
 class TestBreakerFailurePaths:
